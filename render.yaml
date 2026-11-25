@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: securevault-qr-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://svqr-portal.web.app
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MASTER_ENCRYPTION_KEY
+        generateValue: true
+      - key: MAX_FILE_SIZE
+        value: "26214400"
+      - key: MAX_FAILED_ATTEMPTS
+        value: "5"
+      - key: LOCKOUT_DURATION_MINUTES
+        value: "15"

@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Environment variables & secrets (NEVER commit)
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Sensitive storage, encryption keys & local database
+backend/storage/
+*.key
+*.enc
+
+# Build outputs & logs
+frontend/dist/
+*.log
+npm-debug.log*
+firebase-debug.log*
+.firebase/
+
+# OS files
+.DS_Store
+Thumbs.db

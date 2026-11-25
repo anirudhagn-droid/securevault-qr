@@ -1,0 +1,26 @@
+{
+  "name": "securevault-qr",
+  "version": "1.0.0",
+  "description": "Secure Document Storage and QR Code Access System",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "test": "cd backend && npm test",
+    "migrate": "cd backend && npm run migrate",
+    "deploy": "npm run build:frontend && npx firebase-tools deploy --only hosting --project vault-qr",
+    "deploy:hosting": "npx firebase-tools deploy --only hosting --project vault-qr",
+    "connect:render": "node scripts/connect-render.js"
+  },
+  "keywords": [
+    "securevault",
+    "qr-code",
+    "argon2id",
+    "aes-256-gcm",
+    "document-storage"
+  ],
+  "author": "SecureVault QR Team",
+  "license": "ISC"
+}
