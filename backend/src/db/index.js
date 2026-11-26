@@ -346,12 +346,21 @@ function executeLocalDelete(sql, params) {
 async function initDatabase() {
   loadLocalDb();
 
-  const pgConfig = config.databaseUrl ? { connectionString: config.databaseUrl } : config.pg;
+  let pgConfig;
+  if (config.databaseUrl) {
+    const isLocalPg = config.databaseUrl.includes('localhost') || config.databaseUrl.includes('127.0.0.1');
+    pgConfig = {
+      connectionString: config.databaseUrl,
+      ...(isLocalPg ? {} : { ssl: { rejectUnauthorized: false } }),
+    };
+  } else {
+    pgConfig = { ...config.pg };
+  }
 
   try {
     const testPool = new Pool({
       ...pgConfig,
-      connectionTimeoutMillis: 2000,
+      connectionTimeoutMillis: 6000,
     });
 
     const client = await testPool.connect();

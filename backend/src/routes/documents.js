@@ -30,9 +30,39 @@ const upload = multer({
 });
 
 /**
+ * Strips sensitive storage and encryption fields before returning document rows to clients.
+ */
+function sanitizeDocSummary(doc) {
+  return {
+    id: doc.id,
+    document_name: doc.document_name,
+    original_name: doc.original_name,
+    file_type: doc.file_type,
+    mime_type: doc.mime_type,
+    file_size: doc.file_size,
+    allow_download: doc.allow_download !== false,
+    block_screenshots: Boolean(doc.block_screenshots),
+    expiry_date: doc.expiry_date,
+    access_status: doc.access_status,
+    failed_attempts: doc.failed_attempts,
+    lockout_until: doc.lockout_until,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+/**
  * Process a single uploaded file buffer into encrypted storage and DB records
  */
-async function processDocumentUpload({ file, userId, customPassword, expiryDate, requestOrigin }) {
+async function processDocumentUpload({
+  file,
+  userId,
+  customPassword,
+  expiryDate,
+  requestOrigin,
+  allowDownload = true,
+  blockScreenshots = false,
+}) {
   // 1. Validate file (extension, magic bytes, size, dangerous types)
   const validation = validateUploadedFile(file);
   if (!validation.valid) {
@@ -67,13 +97,15 @@ async function processDocumentUpload({ file, userId, customPassword, expiryDate,
 
   const docId = uuidv4();
   const expiryIso = expiryDate ? new Date(expiryDate).toISOString() : null;
+  const encryptedPayloadBase64 = encryptedData.toString('base64');
 
   // 7. Insert into documents table
   await db.query(
     `INSERT INTO documents (
       id, user_id, document_name, original_name, file_type, mime_type, file_size,
-      encrypted_file_path, encrypted_storage_key, iv, auth_tag, expiry_date, access_status
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      encrypted_file_path, encrypted_storage_key, encrypted_payload, iv, auth_tag,
+      allow_download, block_screenshots, expiry_date, access_status
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       docId,
       userId,
@@ -84,8 +116,11 @@ async function processDocumentUpload({ file, userId, customPassword, expiryDate,
       file.size,
       storageFilePath,
       encryptedStorageKey,
+      encryptedPayloadBase64,
       iv,
       authTag,
+      Boolean(allowDownload),
+      Boolean(blockScreenshots),
       expiryIso,
       'active',
     ]
@@ -106,6 +141,8 @@ async function processDocumentUpload({ file, userId, customPassword, expiryDate,
     file_type: validation.ext,
     file_size: file.size,
     mime_type: file.mimetype,
+    allow_download: Boolean(allowDownload),
+    block_screenshots: Boolean(blockScreenshots),
     expiry_date: expiryIso,
     access_status: 'active',
     rawQrToken,
@@ -126,7 +163,10 @@ router.post('/upload', requireAuth, upload.array('files', 10), async (req, res) 
       return res.status(400).json({ success: false, error: 'Please select at least one file to upload.' });
     }
 
-    const { custom_password, expiry_date } = req.body;
+    const { custom_password, expiry_date, allow_download, block_screenshots } = req.body;
+    const allowDownloadBool = allow_download === undefined ? true : String(allow_download).toLowerCase() !== 'false';
+    const blockScreenshotsBool = String(block_screenshots).toLowerCase() === 'true';
+
     const uploadedDocs = [];
     const errors = [];
 
@@ -138,6 +178,8 @@ router.post('/upload', requireAuth, upload.array('files', 10), async (req, res) 
           customPassword: custom_password ? String(custom_password).trim() : null,
           expiryDate: expiry_date,
           requestOrigin: req.headers.origin,
+          allowDownload: allowDownloadBool,
+          blockScreenshots: blockScreenshotsBool,
         });
         uploadedDocs.push(result);
       } catch (err) {
@@ -199,7 +241,7 @@ router.get('/stats', requireAuth, async (req, res) => {
 
     // Recent 5 uploads
     const recentRes = await db.query(
-      `SELECT id, document_name, file_type, file_size, access_status, created_at 
+      `SELECT id, document_name, file_type, file_size, allow_download, block_screenshots, access_status, created_at 
        FROM documents 
        WHERE user_id = $1 
        ORDER BY created_at DESC 
@@ -215,7 +257,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         totalActiveDocuments: totalActive,
         totalRevokedDocuments: totalRevoked,
         totalExpiredDocuments: totalExpired,
-        recentUploads: recentRes.rows,
+        recentUploads: recentRes.rows.map(sanitizeDocSummary),
       },
     });
   } catch (err) {
@@ -240,7 +282,7 @@ router.get('/', requireAuth, async (req, res) => {
     let queryStr = `
       SELECT 
         d.id, d.document_name, d.original_name, d.file_type, d.mime_type, 
-        d.file_size, d.expiry_date, d.access_status, d.created_at, d.updated_at,
+        d.file_size, d.allow_download, d.block_screenshots, d.expiry_date, d.access_status, d.created_at, d.updated_at,
         da.failed_attempts, da.lockout_until
       FROM documents d
       LEFT JOIN document_access da ON d.id = da.document_id
@@ -297,7 +339,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     return res.json({
       success: true,
-      documents: result.rows,
+      documents: result.rows.map(sanitizeDocSummary),
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -333,20 +375,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 
     return res.json({
       success: true,
-      document: {
-        id: doc.id,
-        document_name: doc.document_name,
-        original_name: doc.original_name,
-        file_type: doc.file_type,
-        mime_type: doc.mime_type,
-        file_size: doc.file_size,
-        expiry_date: doc.expiry_date,
-        access_status: doc.access_status,
-        failed_attempts: doc.failed_attempts,
-        lockout_until: doc.lockout_until,
-        created_at: doc.created_at,
-        updated_at: doc.updated_at,
-      },
+      document: sanitizeDocSummary(doc),
     });
   } catch (err) {
     console.error('[Document Detail Error]', err);
@@ -371,8 +400,8 @@ router.get('/:id/download', requireAuth, async (req, res) => {
 
     const doc = docRes.rows[0];
 
-    // Read encrypted data from storage
-    const encryptedBuffer = await storageService.readEncryptedFile(doc.encrypted_file_path);
+    // Read encrypted data from storage (disk or DB payload fallback)
+    const encryptedBuffer = await storageService.readEncryptedDocument(doc);
 
     // Decrypt on the fly using AES-256-GCM
     const decryptedBuffer = decryptDocument(
@@ -410,7 +439,7 @@ router.get('/:id/preview', requireAuth, async (req, res) => {
 
     const doc = docRes.rows[0];
 
-    const encryptedBuffer = await storageService.readEncryptedFile(doc.encrypted_file_path);
+    const encryptedBuffer = await storageService.readEncryptedDocument(doc);
     const decryptedBuffer = decryptDocument(
       encryptedBuffer,
       doc.encrypted_storage_key,
@@ -563,7 +592,7 @@ router.post('/:id/regenerate-qr', requireAuth, async (req, res) => {
  */
 router.put('/:id/status', requireAuth, async (req, res) => {
   try {
-    const { access_status, expiry_date } = req.body;
+    const { access_status, expiry_date, allow_download, block_screenshots } = req.body;
 
     const validStatuses = ['active', 'inactive', 'revoked'];
     if (access_status && !validStatuses.includes(access_status)) {
@@ -593,6 +622,16 @@ router.put('/:id/status', requireAuth, async (req, res) => {
       updateFields.push(`expiry_date = $${params.length}`);
     }
 
+    if (allow_download !== undefined) {
+      params.push(Boolean(allow_download));
+      updateFields.push(`allow_download = $${params.length}`);
+    }
+
+    if (block_screenshots !== undefined) {
+      params.push(Boolean(block_screenshots));
+      updateFields.push(`block_screenshots = $${params.length}`);
+    }
+
     if (updateFields.length === 0) {
       return res.status(400).json({ success: false, error: 'No fields to update.' });
     }
@@ -603,7 +642,7 @@ router.put('/:id/status', requireAuth, async (req, res) => {
       UPDATE documents 
       SET ${updateFields.join(', ')} 
       WHERE id = $1 AND user_id = $2 
-      RETURNING id, document_name, access_status, expiry_date, updated_at
+      RETURNING id, document_name, access_status, allow_download, block_screenshots, expiry_date, updated_at
     `;
 
     const updated = await db.query(updateSql, params);

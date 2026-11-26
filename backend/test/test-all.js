@@ -301,8 +301,63 @@ async function runTests() {
   assert.strictEqual(delRes.statusCode, 200);
   console.log('   ✓ Document and encrypted vault storage purged permanently');
 
+  // Test 16: View-Only Mode (allow_download=false) & Screenshot Restriction (block_screenshots=true)
+  console.log('16. Testing View-Only & Screenshot-Restricted Permissions...');
+  const viewOnlyBoundary = '----ViewOnlyBoundary' + Math.random().toString(36).substring(2);
+  const viewOnlyBody = createMultipartFormData(
+    viewOnlyBoundary,
+    { custom_password: 'V8@m', allow_download: 'false', block_screenshots: 'true' },
+    [{ field: 'files', name: 'ViewOnly_Secret.pdf', type: 'application/pdf', content: samplePdfContent }]
+  );
+  const voUpRes = await makeRequest({
+    method: 'POST',
+    path: '/api/documents/upload',
+    headers: {
+      ...authHeaders,
+      'Content-Type': `multipart/form-data; boundary=${viewOnlyBoundary}`,
+      'Content-Length': viewOnlyBody.length,
+    },
+    body: viewOnlyBody,
+  });
+  assert.strictEqual(voUpRes.statusCode, 201);
+  const voDoc = voUpRes.body.documents[0];
+  assert.strictEqual(voDoc.allow_download, false);
+  assert.strictEqual(voDoc.block_screenshots, true);
+
+  const voVerRes = await makeRequest({
+    method: 'POST',
+    path: `/api/access/${voDoc.rawQrToken}/verify`,
+    body: { password: 'V8@m' },
+  });
+  assert.strictEqual(voVerRes.statusCode, 200);
+  assert.strictEqual(voVerRes.body.document.allow_download, false);
+  assert.strictEqual(voVerRes.body.document.block_screenshots, true);
+
+  const voDlRes = await makeRequest({
+    method: 'GET',
+    path: `/api/access/${voDoc.rawQrToken}/download`,
+    headers: { Authorization: `Bearer ${voVerRes.body.accessSessionToken}` },
+  });
+  assert.strictEqual(voDlRes.statusCode, 403);
+  assert.strictEqual(voDlRes.body.code, 'DOWNLOAD_DISABLED');
+
+  const voPreviewRes = await makeRequest({
+    method: 'GET',
+    path: `/api/access/${voDoc.rawQrToken}/preview`,
+    headers: { Authorization: `Bearer ${voVerRes.body.accessSessionToken}` },
+  });
+  assert.strictEqual(voPreviewRes.statusCode, 200);
+  assert.ok(String(voPreviewRes.headers['cache-control']).includes('no-store'));
+
+  await makeRequest({
+    method: 'DELETE',
+    path: `/api/documents/${voDoc.id}`,
+    headers: authHeaders,
+  });
+  console.log('   ✓ View-Only download blocked (HTTP 403) while protected inline preview succeeds');
+
   console.log('\n======================================================');
-  console.log('  ALL 15 INTEGRATION & SECURITY TESTS PASSED (100%)  ');
+  console.log('  ALL 16 INTEGRATION & SECURITY TESTS PASSED (100%)  ');
   console.log('======================================================\n');
   process.exit(0);
 }

@@ -62,8 +62,8 @@ router.get('/:qrToken/info', async (req, res) => {
 
     const docRes = await db.query(
       `SELECT 
-        d.id, d.document_name, d.file_type, d.file_size, d.access_status, d.expiry_date,
-        da.failed_attempts, da.lockout_until
+        d.id, d.document_name, d.file_type, d.file_size, d.allow_download, d.block_screenshots,
+        d.access_status, d.expiry_date, da.failed_attempts, da.lockout_until
        FROM documents d
        JOIN document_access da ON d.id = da.document_id
        WHERE da.qr_token_hash = $1`,
@@ -114,6 +114,8 @@ router.get('/:qrToken/info', async (req, res) => {
         document_name: doc.document_name,
         file_type: doc.file_type,
         file_size: doc.file_size,
+        allow_download: doc.allow_download !== false,
+        block_screenshots: Boolean(doc.block_screenshots),
         isLockedOut,
         lockoutRemainingSeconds,
         failedAttempts: isLockedOut ? doc.failed_attempts : undefined,
@@ -152,8 +154,8 @@ router.post('/:qrToken/verify', accessAttemptLimiter, async (req, res) => {
     // Look up document and access record
     const docRes = await db.query(
       `SELECT 
-        d.id, d.document_name, d.file_type, d.file_size, d.access_status, d.expiry_date,
-        da.id as access_id, da.password_hash, da.failed_attempts, da.lockout_until
+        d.id, d.document_name, d.file_type, d.file_size, d.allow_download, d.block_screenshots,
+        d.access_status, d.expiry_date, da.id as access_id, da.password_hash, da.failed_attempts, da.lockout_until
        FROM documents d
        JOIN document_access da ON d.id = da.document_id
        WHERE da.qr_token_hash = $1`,
@@ -274,6 +276,8 @@ router.post('/:qrToken/verify', accessAttemptLimiter, async (req, res) => {
         document_name: doc.document_name,
         file_type: doc.file_type,
         file_size: doc.file_size,
+        allow_download: doc.allow_download !== false,
+        block_screenshots: Boolean(doc.block_screenshots),
       },
     });
   } catch (err) {
@@ -306,7 +310,7 @@ router.get('/:qrToken/preview', requireAccessSession, async (req, res) => {
     const doc = docRes.rows[0];
 
     // Decrypt on the fly using AES-256-GCM
-    const encryptedBuffer = await storageService.readEncryptedFile(doc.encrypted_file_path);
+    const encryptedBuffer = await storageService.readEncryptedDocument(doc);
     const decryptedBuffer = decryptDocument(
       encryptedBuffer,
       doc.encrypted_storage_key,
@@ -317,6 +321,10 @@ router.get('/:qrToken/preview', requireAccessSession, async (req, res) => {
     res.setHeader('Content-Type', doc.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.original_name)}"`);
     res.setHeader('Content-Length', decryptedBuffer.length);
+    if (doc.allow_download === false || doc.block_screenshots) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+    }
 
     return res.send(decryptedBuffer);
   } catch (err) {
@@ -348,7 +356,15 @@ router.get('/:qrToken/download', requireAccessSession, async (req, res) => {
 
     const doc = docRes.rows[0];
 
-    const encryptedBuffer = await storageService.readEncryptedFile(doc.encrypted_file_path);
+    if (doc.allow_download === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'Downloading has been disabled by the document owner. This file is view-only.',
+        code: 'DOWNLOAD_DISABLED',
+      });
+    }
+
+    const encryptedBuffer = await storageService.readEncryptedDocument(doc);
     const decryptedBuffer = decryptDocument(
       encryptedBuffer,
       doc.encrypted_storage_key,

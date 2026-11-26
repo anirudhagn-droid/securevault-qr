@@ -5,7 +5,16 @@ const config = require('../config');
 
 async function runMigration() {
   console.log('[Migration] Starting PostgreSQL database migration for SecureVault QR...');
-  const pgConfig = config.databaseUrl ? { connectionString: config.databaseUrl } : config.pg;
+  let pgConfig;
+  if (config.databaseUrl) {
+    const isLocalPg = config.databaseUrl.includes('localhost') || config.databaseUrl.includes('127.0.0.1');
+    pgConfig = {
+      connectionString: config.databaseUrl,
+      ...(isLocalPg ? {} : { ssl: { rejectUnauthorized: false } }),
+    };
+  } else {
+    pgConfig = config.pg;
+  }
 
   const pool = new Pool(pgConfig);
 

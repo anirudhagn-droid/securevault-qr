@@ -30,13 +30,21 @@ CREATE TABLE IF NOT EXISTS documents (
     file_size BIGINT NOT NULL,
     encrypted_file_path TEXT NOT NULL,
     encrypted_storage_key TEXT NOT NULL,
+    encrypted_payload TEXT,
     iv VARCHAR(64) NOT NULL,
     auth_tag VARCHAR(64) NOT NULL,
+    allow_download BOOLEAN DEFAULT TRUE,
+    block_screenshots BOOLEAN DEFAULT FALSE,
     expiry_date TIMESTAMP WITH TIME ZONE,
     access_status VARCHAR(20) DEFAULT 'active' CHECK (access_status IN ('active', 'inactive', 'revoked', 'expired')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Safe schema evolution for existing PostgreSQL deployments
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS encrypted_payload TEXT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS allow_download BOOLEAN DEFAULT TRUE;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS block_screenshots BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(access_status);

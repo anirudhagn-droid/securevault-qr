@@ -51,6 +51,23 @@ class StorageService {
   }
 
   /**
+   * Reads encrypted document bytes from local vault disk, falling back
+   * to the encrypted database payload if ephemeral local storage was reset.
+   *
+   * @param {{ encrypted_file_path: string, encrypted_payload?: string }} doc
+   * @returns {Promise<Buffer>}
+   */
+  async readEncryptedDocument(doc) {
+    if (doc.encrypted_file_path && fs.existsSync(doc.encrypted_file_path)) {
+      return await fs.promises.readFile(doc.encrypted_file_path);
+    }
+    if (doc.encrypted_payload) {
+      return Buffer.from(doc.encrypted_payload, 'base64');
+    }
+    throw new Error('Encrypted file not found in storage vault.');
+  }
+
+  /**
    * Securely deletes an encrypted document file from private storage.
    * 
    * @param {string} filePath 
